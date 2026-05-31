@@ -1,0 +1,16 @@
+# Toolchain caches
+**/.pack/
+**/.cmsis/
+
+# Generated build output
+**/build/
+remote_control_lvgl/MDK-ARM/remote_control_lvgl/
+
+# Local logs and IDE state
+remote_control_lvgl/MDK-ARM/*.log
+remote_control_lvgl/MDK-ARM/*.uvguix.*
+remote_control_lvgl/MDK-ARM/*.lst
+**/.claude/settings.local.json
+**/.vscode/*.log*
+**/.vscode/c_cpp_properties.json
+**/*.code-workspace
