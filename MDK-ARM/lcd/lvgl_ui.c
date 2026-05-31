@@ -37,11 +37,21 @@ volatile uintptr_t lvgl_ui_last_obj = 0;
 
 static void create_home_page(void);
 static void create_grid_page(uint8_t color_id);
+static void clean_inactive_screen_cb(void * user_data);
 static void square_to_text(uint8_t value, char * text);
 
 static lv_obj_t * home_screen;
 static lv_obj_t * grid_screen;
 static lv_obj_t * grid_status_label;
+
+static void clean_inactive_screen_cb(void * user_data)
+{
+    lv_obj_t * screen = (lv_obj_t *)user_data;
+
+    if(screen != NULL && screen != lv_scr_act()) {
+        lv_obj_clean(screen);
+    }
+}
 
 static lv_color_t color_main(uint8_t color_id)
 {
@@ -81,7 +91,7 @@ static void color_btn_event_cb(lv_event_t * e)
 {
     lv_event_code_t code = lv_event_get_code(e);
 
-    if(code == LV_EVENT_PRESSED) {
+    if(code == LV_EVENT_CLICKED) {
         uint32_t color_id = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
 
         lvgl_ui_event_count++;
@@ -98,7 +108,7 @@ static void color_btn_event_cb(lv_event_t * e)
 
 static void grid_btn_event_cb(lv_event_t * e)
 {
-    if(lv_event_get_code(e) == LV_EVENT_PRESSED) {
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
         uint32_t square_id = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
         char status_text[12] = {0};
 
@@ -131,7 +141,7 @@ static void grid_btn_event_cb(lv_event_t * e)
 
 static void back_btn_event_cb(lv_event_t * e)
 {
-    if(lv_event_get_code(e) == LV_EVENT_PRESSED) {
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) {
         lvgl_ui_event_count++;
         lvgl_ui_back_event_count++;
         create_home_page();
@@ -162,7 +172,7 @@ static void create_color_button(lv_obj_t * parent, int32_t x, const char * text,
     style_color_button(btn, color_id);
     lvgl_ui_sub_stage = 102U;
     lv_obj_set_pos(btn, x, COLOR_BUTTON_Y);
-    lv_obj_add_event_cb(btn, color_btn_event_cb, LV_EVENT_PRESSED, (void *)(uintptr_t)color_id);
+    lv_obj_add_event_cb(btn, color_btn_event_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)color_id);
     lvgl_ui_sub_stage = 103U;
 
     lv_obj_t * label = lv_label_create(btn);
@@ -205,7 +215,7 @@ static void create_grid_square(lv_obj_t * parent, uint8_t color_id, uint8_t squa
     lv_obj_set_style_border_color(btn, color_border(color_id), LV_STATE_DEFAULT);
     lv_obj_set_style_shadow_width(btn, 0, LV_STATE_DEFAULT);
     apply_press_feedback(btn, bg);
-    lv_obj_add_event_cb(btn, grid_btn_event_cb, LV_EVENT_PRESSED, (void *)(uintptr_t)square_id);
+    lv_obj_add_event_cb(btn, grid_btn_event_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)square_id);
 
     lv_obj_t * label = lv_label_create(btn);
     lv_obj_remove_style_all(label);
@@ -228,7 +238,7 @@ static void create_back_button(lv_obj_t * parent)
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(btn, 0, LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x111315), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(btn, back_btn_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(btn, back_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * label = lv_label_create(btn);
     lv_obj_remove_style_all(label);
@@ -275,6 +285,10 @@ static void create_home_page(void)
 
     lvgl_ui_sub_stage = 23U;
     lv_scr_load(screen);
+    lv_indev_reset(NULL, NULL);
+    if(grid_screen != NULL) {
+        (void)lv_async_call(clean_inactive_screen_cb, grid_screen);
+    }
     lvgl_ui_sub_stage = 24U;
     lvgl_ui_stage = 29U;
 }
@@ -324,6 +338,10 @@ static void create_grid_page(uint8_t color_id)
     }
 
     lv_scr_load(screen);
+    lv_indev_reset(NULL, NULL);
+    if(home_screen != NULL) {
+        (void)lv_async_call(clean_inactive_screen_cb, home_screen);
+    }
 }
 
 void lvgl_ui_create(void)

@@ -111,17 +111,7 @@ void lv_port_indev_init(void)
     indev_drv.read_cb = touchpad_read;
     indev_touchpad = lv_indev_drv_register(&indev_drv);
 
-    touch_cursor = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(touch_cursor);
-    lv_obj_set_size(touch_cursor, 18, 18);
-    lv_obj_set_style_radius(touch_cursor, LV_RADIUS_CIRCLE, LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(touch_cursor, lv_color_hex(0x00FF00), LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(touch_cursor, LV_OPA_COVER, LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(touch_cursor, 2, LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(touch_cursor, lv_color_black(), LV_STATE_DEFAULT);
-    lv_obj_add_flag(touch_cursor, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(touch_cursor, LV_OBJ_FLAG_CLICKABLE);
-    lv_indev_set_cursor(indev_touchpad, touch_cursor);
+    touch_cursor = NULL;
 
 //    /*------------------
 //     * Mouse
@@ -228,17 +218,11 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
         touchpad_get_xy(&last_x, &last_y);
         data->state = LV_INDEV_STATE_PR;
         lv_port_touch_press_count++;
-        if(touch_cursor != NULL) {
-            lv_obj_clear_flag(touch_cursor, LV_OBJ_FLAG_HIDDEN);
-        }
     }
     else {
         lv_port_touch_pressed = 0;
         data->state = LV_INDEV_STATE_REL;
         lv_port_touch_release_count++;
-        if(touch_cursor != NULL) {
-            lv_obj_add_flag(touch_cursor, LV_OBJ_FLAG_HIDDEN);
-        }
     }
 
     /*Set the last pressed coordinates*/

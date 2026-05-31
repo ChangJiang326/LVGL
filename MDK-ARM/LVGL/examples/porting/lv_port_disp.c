@@ -267,6 +267,7 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
             int32_t area_w = area->x2 - area->x1 + 1;
             int32_t flush_w = x2 - x1 + 1;
             int32_t flush_h = y2 - y1 + 1;
+            lv_color_t * start_p;
 
             lv_port_flush_last_w = (uint32_t)flush_w;
             lv_port_flush_last_h = (uint32_t)flush_h;
@@ -275,17 +276,20 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
             lv_port_flush_pixels = 0;
             lcd_config_lvgl_canvas();
             color_p += (y1 - area->y1) * area_w + (x1 - area->x1);
+            start_p = color_p;
+            lv_port_flush_stage = 2;
+            lv_port_flush_x = (uint32_t)x1;
+            lv_port_flush_y = (uint32_t)y1;
+            Active_Window_XY((uint)x1, (uint)y1);
+            Active_Window_WH((uint)flush_w, (uint)flush_h);
+            Goto_Pixel_XY((uint)x1, (uint)y1);
+            LCD_CmdWrite(0x04);
+            lv_port_flush_stage = 3;
+
             for(y = y1; y <= y2; y++) {
                 lv_color_t * row_p = color_p;
 
-                lv_port_flush_stage = 2;
                 lv_port_flush_y = (uint32_t)y;
-                Active_Window_XY((uint)x1, (uint)y);
-                Active_Window_WH((uint)flush_w, 1);
-                Goto_Pixel_XY((uint)x1, (uint)y);
-                LCD_CmdWrite(0x04);
-
-                lv_port_flush_stage = 3;
                 for(x = x1; x <= x2; x++) {
                     lv_port_flush_x = (uint32_t)x;
                     lv_port_flush_last_color = row_p->full;
@@ -304,7 +308,7 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
                     row_p++;
                 }
 
-                color_p += area_w;
+                color_p = start_p + (y - y1 + 1) * area_w;
             }
 
             lv_port_flush_stage = 4;

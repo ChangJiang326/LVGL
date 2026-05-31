@@ -366,18 +366,7 @@ char Readtouch_CTP_GT(void)
         return readtouch_ft();
     }
 
-    if(readtouch_gt() != 0) {
-        return 1;
-    }
-
-    if(ctp_hw_i2c_addr == 0x14U || ctp_hw_i2c_addr == 0x38U || ctp_hw_i2c_addr == 0x15U) {
-        if(readtouch_ft() != 0) {
-            ctp_hw_i2c_proto = CTP_PROTO_FT;
-            return 1;
-        }
-    }
-
-    return 0;
+    return readtouch_gt();
 }
 
 char Readtouch_CTP_FT(void)
