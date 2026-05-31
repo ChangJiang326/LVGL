@@ -1,16 +1,28 @@
-# Toolchain caches
-**/.pack/
-**/.cmsis/
+# dot files
+/.vscode/launch.json
+/.settings
+/.eide/log
+/.eide.usr.ctx.json
 
-# Generated build output
-**/build/
-remote_control_lvgl/MDK-ARM/remote_control_lvgl/
+# project out
+/build
+/bin
+/obj
+/out
+/MDK-ARM/fsmc_control
+*.o
+*.d
+*.crf
+*.axf
+*.elf
+*.hex
+*.map
+*.htm
+*.lnp
+*.lst
+*.Bak
+*.iex
 
-# Local logs and IDE state
-remote_control_lvgl/MDK-ARM/*.log
-remote_control_lvgl/MDK-ARM/*.uvguix.*
-remote_control_lvgl/MDK-ARM/*.lst
-**/.claude/settings.local.json
-**/.vscode/*.log*
-**/.vscode/c_cpp_properties.json
-**/*.code-workspace
+# eide template
+*.ept
+*.eide-template
