@@ -48,7 +48,7 @@
 /* USER CODE END Includes */
 
 /* Ensure definitions are only used by the compiler, and not by the assembler. */
-#if defined(__ICCARM__) || defined(__CC_ARM) || defined(__ARMCC_VERSION) || defined(__GNUC__)
+#if defined(__ICCARM__) || defined(__CC_ARM) || defined(__GNUC__) || defined(__ARMCC_VERSION)
   #include <stdint.h>
   extern uint32_t SystemCoreClock;
 #endif
@@ -90,6 +90,7 @@ to exclude the API function. */
 #define INCLUDE_vTaskDelayUntil              0
 #define INCLUDE_vTaskDelay                   1
 #define INCLUDE_xTaskGetSchedulerState       1
+#define INCLUDE_uxTaskGetStackHighWaterMark  1
 
 /* Cortex-M specific definitions. */
 #ifdef __NVIC_PRIO_BITS
@@ -134,6 +135,7 @@ standard names. */
 
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+#define configCHECK_FOR_STACK_OVERFLOW       2
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

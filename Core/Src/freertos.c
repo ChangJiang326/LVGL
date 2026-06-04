@@ -46,9 +46,13 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+volatile uint32_t freertos_stack_overflow = 0;
+volatile char freertos_stack_overflow_task[configMAX_TASK_NAME_LEN] = {0};
 
 /* USER CODE END Variables */
 osThreadId LVGL_TASKHandle;
+osThreadId ADC_TASKHandle;
+osThreadId LORA_TASKHandle;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -56,6 +60,8 @@ osThreadId LVGL_TASKHandle;
 /* USER CODE END FunctionPrototypes */
 
 void lvgl_task(void const * argument);
+void ADC_Task(void const * argument);
+void LORA_Task(void const * argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -103,8 +109,16 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the thread(s) */
   /* definition and creation of LVGL_TASK */
-  osThreadDef(LVGL_TASK, lvgl_task, osPriorityNormal, 0, 2048);
+  osThreadDef(LVGL_TASK, lvgl_task, osPriorityNormal, 0, 3072);
   LVGL_TASKHandle = osThreadCreate(osThread(LVGL_TASK), NULL);
+
+  /* definition and creation of ADC_TASK */
+  osThreadDef(ADC_TASK, ADC_Task, osPriorityNormal, 0, 128);
+  ADC_TASKHandle = osThreadCreate(osThread(ADC_TASK), NULL);
+
+  /* definition and creation of LORA_TASK */
+  osThreadDef(LORA_TASK, LORA_Task, osPriorityNormal, 0, 512);
+  LORA_TASKHandle = osThreadCreate(osThread(LORA_TASK), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -130,7 +144,65 @@ __weak void lvgl_task(void const * argument)
   /* USER CODE END lvgl_task */
 }
 
+/* USER CODE BEGIN Header_ADC_Task */
+/**
+* @brief Function implementing the ADC_TASK thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_ADC_Task */
+__weak void ADC_Task(void const * argument)
+{
+  /* USER CODE BEGIN ADC_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END ADC_Task */
+}
+
+/* USER CODE BEGIN Header_LORA_Task */
+/**
+* @brief Function implementing the LORA_TASK thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_LORA_Task */
+__weak void LORA_Task(void const * argument)
+{
+  /* USER CODE BEGIN LORA_Task */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(1);
+  }
+  /* USER CODE END LORA_Task */
+}
+
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
+{
+  uint32_t i;
+
+  (void)xTask;
+  freertos_stack_overflow = 1U;
+
+  for(i = 0U; i < (configMAX_TASK_NAME_LEN - 1U); i++)
+  {
+    if(pcTaskName == NULL || pcTaskName[i] == '\0')
+    {
+      break;
+    }
+    freertos_stack_overflow_task[i] = pcTaskName[i];
+  }
+  freertos_stack_overflow_task[i] = '\0';
+
+  taskDISABLE_INTERRUPTS();
+  for(;;)
+  {
+  }
+}
 
 /* USER CODE END Application */

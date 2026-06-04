@@ -1,4 +1,6 @@
 #include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "lvgl.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
@@ -11,6 +13,8 @@ volatile uint32_t lvgl_mem_free_size = 0;
 volatile uint32_t lvgl_mem_free_biggest_size = 0;
 volatile uint32_t lvgl_mem_max_used = 0;
 volatile uint8_t lvgl_mem_used_pct = 0;
+volatile uint32_t lvgl_task_stack_free = 0;
+volatile uint32_t lvgl_task_stack_free_min = 0xFFFFFFFFU;
 
 void lvgl_task(void const * argument)
 {
@@ -28,6 +32,10 @@ void lvgl_task(void const * argument)
     lv_tick_inc(1);
     lv_timer_handler();
     lvgl_task_handler_count++;
+    lvgl_task_stack_free = uxTaskGetStackHighWaterMark(NULL);
+    if(lvgl_task_stack_free < lvgl_task_stack_free_min) {
+      lvgl_task_stack_free_min = lvgl_task_stack_free;
+    }
     if((lvgl_task_loop_count % 100U) == 0U) {
       lv_mem_monitor_t mon;
       lv_mem_monitor(&mon);

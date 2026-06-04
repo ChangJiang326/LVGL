@@ -57,16 +57,9 @@
 #include "cmsis_os.h"
 
 /*
- * ARM Compiler 6
- */
-#if   defined ( __ARMCC_VERSION )
-
-  #include "cmsis_armclang.h"
-
-/*
  * ARM Compiler 4/5
  */
-#elif defined ( __CC_ARM )
+#if   defined ( __CC_ARM )
 
   #define __ASM            __asm                                      
   #define __INLINE         __inline                                     
@@ -77,6 +70,8 @@
 /*
  * GNU Compiler
  */
+#elif defined ( __ARMCC_VERSION )
+  #include "cmsis_armclang.h"
 #elif defined ( __GNUC__ )
 
   #define __ASM            __asm                                      /*!< asm keyword for GNU Compiler          */

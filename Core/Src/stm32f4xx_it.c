@@ -46,6 +46,10 @@ volatile uint32_t fault_cfsr = 0;
 volatile uint32_t fault_hfsr = 0;
 volatile uint32_t fault_bfar = 0;
 volatile uint32_t fault_mmfar = 0;
+volatile uint32_t fault_sp = 0;
+volatile uint32_t fault_stacked_pc = 0;
+volatile uint32_t fault_stacked_lr = 0;
+volatile uint32_t fault_stacked_psr = 0;
 
 /* USER CODE END PV */
 
@@ -56,10 +60,36 @@ volatile uint32_t fault_mmfar = 0;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void record_fault(uint32_t type)
+{
+  uint32_t * stack;
+
+  __asm volatile(
+    "tst lr, #4        \n"
+    "ite eq            \n"
+    "mrseq %0, msp     \n"
+    "mrsne %0, psp     \n"
+    : "=r"(stack));
+
+  fault_type = type;
+  fault_cfsr = SCB->CFSR;
+  fault_hfsr = SCB->HFSR;
+  fault_bfar = SCB->BFAR;
+  fault_mmfar = SCB->MMFAR;
+  fault_sp = (uint32_t)stack;
+  fault_stacked_lr = stack[5];
+  fault_stacked_pc = stack[6];
+  fault_stacked_psr = stack[7];
+}
 
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern DMA_HandleTypeDef hdma_adc1;
+extern ADC_HandleTypeDef hadc1;
+extern DMA_HandleTypeDef hdma_usart1_tx;
+extern DMA_HandleTypeDef hdma_usart1_rx;
+extern UART_HandleTypeDef huart1;
 extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
@@ -90,11 +120,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-  fault_type = 1;
-  fault_cfsr = SCB->CFSR;
-  fault_hfsr = SCB->HFSR;
-  fault_bfar = SCB->BFAR;
-  fault_mmfar = SCB->MMFAR;
+  record_fault(1);
 
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
@@ -110,11 +136,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-  fault_type = 2;
-  fault_cfsr = SCB->CFSR;
-  fault_hfsr = SCB->HFSR;
-  fault_bfar = SCB->BFAR;
-  fault_mmfar = SCB->MMFAR;
+  record_fault(2);
 
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
@@ -130,11 +152,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-  fault_type = 3;
-  fault_cfsr = SCB->CFSR;
-  fault_hfsr = SCB->HFSR;
-  fault_bfar = SCB->BFAR;
-  fault_mmfar = SCB->MMFAR;
+  record_fault(3);
 
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
@@ -150,11 +168,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-  fault_type = 4;
-  fault_cfsr = SCB->CFSR;
-  fault_hfsr = SCB->HFSR;
-  fault_bfar = SCB->BFAR;
-  fault_mmfar = SCB->MMFAR;
+  record_fault(4);
 
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
@@ -185,6 +199,34 @@ void DebugMon_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles ADC1, ADC2 and ADC3 global interrupts.
+  */
+void ADC_IRQHandler(void)
+{
+  /* USER CODE BEGIN ADC_IRQn 0 */
+
+  /* USER CODE END ADC_IRQn 0 */
+  HAL_ADC_IRQHandler(&hadc1);
+  /* USER CODE BEGIN ADC_IRQn 1 */
+
+  /* USER CODE END ADC_IRQn 1 */
+}
+
+/**
+  * @brief This function handles USART1 global interrupt.
+  */
+void USART1_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART1_IRQn 0 */
+
+  /* USER CODE END USART1_IRQn 0 */
+  HAL_UART_IRQHandler(&huart1);
+  /* USER CODE BEGIN USART1_IRQn 1 */
+
+  /* USER CODE END USART1_IRQn 1 */
+}
+
+/**
   * @brief This function handles TIM6 global interrupt, DAC1 and DAC2 underrun error interrupts.
   */
 void TIM6_DAC_IRQHandler(void)
@@ -196,6 +238,48 @@ void TIM6_DAC_IRQHandler(void)
   /* USER CODE BEGIN TIM6_DAC_IRQn 1 */
 
   /* USER CODE END TIM6_DAC_IRQn 1 */
+}
+
+/**
+  * @brief This function handles DMA2 stream0 global interrupt.
+  */
+void DMA2_Stream0_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream0_IRQn 0 */
+
+  /* USER CODE END DMA2_Stream0_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_adc1);
+  /* USER CODE BEGIN DMA2_Stream0_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream0_IRQn 1 */
+}
+
+/**
+  * @brief This function handles DMA2 stream2 global interrupt.
+  */
+void DMA2_Stream2_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream2_IRQn 0 */
+
+  /* USER CODE END DMA2_Stream2_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_usart1_rx);
+  /* USER CODE BEGIN DMA2_Stream2_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream2_IRQn 1 */
+}
+
+/**
+  * @brief This function handles DMA2 stream7 global interrupt.
+  */
+void DMA2_Stream7_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA2_Stream7_IRQn 0 */
+
+  /* USER CODE END DMA2_Stream7_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_usart1_tx);
+  /* USER CODE BEGIN DMA2_Stream7_IRQn 1 */
+
+  /* USER CODE END DMA2_Stream7_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */
