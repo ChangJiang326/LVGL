@@ -48,6 +48,7 @@
 /* USER CODE BEGIN Variables */
 volatile uint32_t freertos_stack_overflow = 0;
 volatile char freertos_stack_overflow_task[configMAX_TASK_NAME_LEN] = {0};
+volatile uint8_t freertos_task_create_error = 0;
 
 /* USER CODE END Variables */
 osThreadId LVGL_TASKHandle;
@@ -111,14 +112,17 @@ void MX_FREERTOS_Init(void) {
   /* definition and creation of LVGL_TASK */
   osThreadDef(LVGL_TASK, lvgl_task, osPriorityNormal, 0, 3072);
   LVGL_TASKHandle = osThreadCreate(osThread(LVGL_TASK), NULL);
+  if (LVGL_TASKHandle == NULL) freertos_task_create_error |= 0x01U;
 
   /* definition and creation of ADC_TASK */
   osThreadDef(ADC_TASK, ADC_Task, osPriorityNormal, 0, 128);
   ADC_TASKHandle = osThreadCreate(osThread(ADC_TASK), NULL);
+  if (ADC_TASKHandle == NULL) freertos_task_create_error |= 0x02U;
 
   /* definition and creation of LORA_TASK */
-  osThreadDef(LORA_TASK, LORA_Task, osPriorityNormal, 0, 512);
+  osThreadDef(LORA_TASK, LORA_Task, osPriorityNormal, 0, 1024);
   LORA_TASKHandle = osThreadCreate(osThread(LORA_TASK), NULL);
+  if (LORA_TASKHandle == NULL) freertos_task_create_error |= 0x04U;
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

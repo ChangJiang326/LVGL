@@ -1,218 +1,566 @@
+
 #include "lora_task.h"
 
 #include "ADC_TASK.h"
-#include "main.h"
-#include "usart.h"
 #include "cmsis_os.h"
+#include "lvgl_ui.h"
+#include "usart.h"
+
 #include <string.h>
 
-/*
- * 最简单用法：
- *
- * 你只改 LORA_Task() 里面的 lora_data[]。
- * 想发什么，就直接往里面填什么：
- *
- *     int16_t lora_data[] = {
- *         X1,
- *         Y1,
- *         -1,
- *         -555,
- *         2918,
- *     };
- *
- * 不用手动拆高字节、低字节。
- * Lora_DmaSendInt16() 会自动把每个 int16_t 拆成 2 个字节发送。
- *
- * 发送格式固定为：
- *     0xAA + 数据 + 0x55
- *
- * 例如：
- *     int16_t lora_data[] = {-1, -555, 2918};
- *
- * 实际发送：
- *     AA FF FF FD D5 0B 66 55
- *
- * 接收端每 2 个字节合成一个 int16_t：
- *     int16_t v = (int16_t)((payload[i] << 8) | payload[i + 1]);
- */
+#define LORA_TX_BUFFER_SIZE LORA_UART_TX_FRAME_SIZE
 
-volatile uint8_t lora_ready = 1U;
-volatile uint16_t lora_tx_seq = 0U;
+/* ==================== 全局变量 ==================== */
+
+LoraRemoteData_t lora_tx_data = {0};
+
+volatile LoraRemoteData_t lora_rx_data = {0};
+volatile uint8_t lora_rx_data_valid = 0U;
+
+volatile float lora_rx_float_array[CURVE_TX_MAX_FLOATS] = {0.0f};
+volatile uint16_t lora_rx_float_count = 0U;
+
+/* 发送调试变量 */
 volatile uint32_t lora_tx_count = 0U;
-volatile uint32_t lora_rx_count = 0U;
-volatile uint32_t lora_error_count = 0U;
-volatile uint32_t lora_aux_timeout_count = 0U;
-volatile uint32_t lora_aux_low_tx_count = 0U;
-volatile uint32_t lora_last_status = HAL_OK;
-volatile uint8_t lora_last_rx_byte = 0U;
-volatile uint8_t lora_last_frame_len = 0U;
-volatile uint8_t lora_last_checksum = 0U;
-volatile uint8_t lora_aux_pin = 0U;
-volatile uint8_t lora_enable_tx = 1U;
-volatile uint32_t lora_send_period_ms = LORA_SEND_PERIOD_MS;
-volatile uint8_t lora_debug_tx_frame[LORA_TX_FRAME_LEN] = {0U};
-volatile uint16_t lora_debug_tx_frame_len = 0U;
-volatile int16_t lora_debug_values[LORA_TX_VALUE_MAX] = {0};
-volatile uint8_t lora_debug_value_count = 0U;
-volatile uint8_t lora_debug_payload_len = 0U;
-volatile uint8_t lora_debug_manual_mode = 0U;
-volatile uint8_t lora_debug_send_once = 0U;
+volatile uint32_t lora_tx_complete_count = 0U;
+volatile uint32_t lora_tx_busy_count = 0U;
+volatile uint32_t lora_tx_error_count = 0U;
+volatile uint32_t lora_tx_last_complete_tick = 0U;
+volatile uint8_t lora_tx_ready = 1U;
+
+volatile uint32_t lora_tx_change_count = 0U;
+volatile uint32_t lora_tx_heartbeat_count = 0U;
+volatile uint32_t lora_tx_noise_ignored_count = 0U;
+
+/* 任务调试变量 */
 volatile uint32_t lora_task_loop_count = 0U;
-volatile uint32_t lora_send_call_count = 0U;
-volatile uint32_t lora_dma_start_count = 0U;
-volatile uint32_t lora_skip_disabled_count = 0U;
-volatile uint32_t lora_skip_manual_count = 0U;
-volatile uint32_t lora_uart_busy_count = 0U;
-volatile uint32_t lora_dma_fail_count = 0U;
-volatile uint32_t lora_last_uart_gstate = 0U;
 
-static uint8_t lora_tx_buf[LORA_TX_FRAME_LEN];
-static uint8_t lora_value_buf[LORA_TX_PAYLOAD_MAX];
+/* 接收调试变量 */
+volatile uint32_t lora_rx_frame_count = 0U;
+volatile uint32_t lora_rx_event_count = 0U;
+volatile uint32_t lora_rx_error_count = 0U;
+volatile uint32_t lora_rx_length_error_count = 0U;
+volatile uint32_t lora_rx_overflow_count = 0U;
+volatile uint32_t lora_rx_dma_error_count = 0U;
+volatile uint32_t lora_rx_resync_count = 0U;
+volatile uint32_t lora_rx_value_error_count = 0U;
+volatile uint32_t lora_rx_last_tick = 0U;
 
-uint8_t Lora_DmaSend(const uint8_t * data, uint8_t len)
-{
-    HAL_StatusTypeDef status;
-    uint16_t frame_len;
-    uint16_t i;
+/* ==================== 静态变量 ==================== */
 
-    if ((data == NULL) || (len == 0U) || (len > LORA_TX_PAYLOAD_MAX))
-    {
-        lora_last_status = HAL_ERROR;
-        lora_error_count++;
-        return 0U;
-    }
+static uint8_t lora_tx_buffer[LORA_TX_BUFFER_SIZE];
+static uint8_t lora_rx_dma_buffer[LORA_RX_DMA_BUFFER_SIZE];
+static uint8_t lora_rx_frame_buffer[LORA_FRAME_SIZE];
 
-    if (huart1.gState != HAL_UART_STATE_READY)
-    {
-        lora_ready = 0U;
-        lora_last_status = HAL_BUSY;
-        lora_last_uart_gstate = (uint32_t)huart1.gState;
-        lora_uart_busy_count++;
-        return 0U;
-    }
+static uint16_t lora_rx_frame_length = 0U;
+static uint16_t lora_rx_dma_position = 0U;
 
-    lora_tx_buf[0] = LORA_FRAME_HEAD;
-    memcpy(&lora_tx_buf[1], data, len);
-    lora_tx_buf[len + 1U] = LORA_FRAME_TAIL;
-    frame_len = (uint16_t)(len + 2U);
+static volatile uint8_t lora_rx_restart_pending = 0U;
 
-    for (i = 0U; i < frame_len; i++)
-    {
-        lora_debug_tx_frame[i] = lora_tx_buf[i];
-    }
-    lora_debug_tx_frame_len = frame_len;
-    lora_debug_payload_len = len;
+static LoraRemoteData_t lora_last_sent_data = {0};
+static uint32_t lora_last_send_tick = 0U;
+static uint8_t lora_last_sent_valid = 0U;
 
-    lora_dma_start_count++;
-    status = HAL_UART_Transmit_DMA(&huart1, lora_tx_buf, frame_len);
-    lora_last_status = status;
-    lora_last_uart_gstate = (uint32_t)huart1.gState;
+/* ==================== 内部函数 ==================== */
 
-    if (status == HAL_OK)
-    {
-        lora_ready = 0U;
-        lora_last_frame_len = (uint8_t)frame_len;
-        lora_tx_count++;
-        lora_tx_seq++;
-        return 1U;
-    }
-
-    lora_ready = 0U;
-    lora_error_count++;
-    lora_dma_fail_count++;
-    return 0U;
-}
-
-/*
- * 推荐使用这个函数。
- *
- * data[] 是 int16_t 数组，所以 lora_data[] 里面可以直接写：
- *     -1, -555, 2918, X1, Y1, X2, Y2
- *
- * count 是数组元素个数，用 LORA_ARRAY_COUNT(lora_data) 自动计算。
+/**
+ * @brief 判断当前遥控器数据相对于上一帧是否发生有效变化。
  */
-uint8_t Lora_DmaSendInt16(const int16_t * data, uint8_t count)
+static uint8_t Lora_DataChanged(
+    const LoraRemoteData_t *current,
+    const LoraRemoteData_t *previous)
 {
     uint8_t i;
 
-    if ((data == NULL) || (count == 0U) || (count > LORA_TX_VALUE_MAX))
+    for (i = 0U; i < 4U; i++)
     {
-        lora_last_status = HAL_ERROR;
-        lora_error_count++;
+        float difference =
+            current->joystick[i] - previous->joystick[i];
+
+        if ((difference >= LORA_JOYSTICK_CHANGE_THRESHOLD) ||
+            (difference <= -LORA_JOYSTICK_CHANGE_THRESHOLD))
+        {
+            return 1U;
+        }
+    }
+
+    if ((current->selected_color != previous->selected_color) ||
+        (current->r1_count != previous->r1_count) ||
+        (current->r2_count != previous->r2_count) ||
+        (current->fake_count != previous->fake_count))
+    {
+        return 1U;
+    }
+
+    return 0U;
+}
+
+/**
+ * @brief 判断USART1当前是否可以启动DMA发送。
+ */
+static uint8_t Lora_CanTransmit(void)
+{
+    if ((lora_tx_ready == 0U) ||
+        (huart1.gState != HAL_UART_STATE_READY))
+    {
+        lora_tx_busy_count++;
         return 0U;
     }
 
-    for (i = 0U; i < count; i++)
-    {
-        uint16_t value = (uint16_t)data[i];
-
-        lora_debug_values[i] = data[i];
-        lora_value_buf[i * 2U] = (uint8_t)(value >> 8);
-        lora_value_buf[i * 2U + 1U] = (uint8_t)value;
-    }
-    lora_debug_value_count = count;
-
-    return Lora_DmaSend(lora_value_buf, (uint8_t)(count * 2U));
+    return 1U;
 }
 
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef * huart)
+/**
+ * @brief 启动USART1 DMA发送。
+ */
+static uint8_t Lora_StartTransmit(uint16_t length)
+{
+    lora_tx_ready = 0U;
+
+    if (HAL_UART_Transmit_DMA(
+            &huart1,
+            lora_tx_buffer,
+            length) != HAL_OK)
+    {
+        lora_tx_ready = 1U;
+        lora_tx_error_count++;
+
+        return 0U;
+    }
+
+    lora_tx_count++;
+
+    return 1U;
+}
+
+/**
+ * @brief 更新本机遥控器数据。
+ */
+void Lora_UpdateLocalData(void)
+{
+    int joystick[JOYSTICK_CH_NUM];
+
+    ADC_GetJoystickSnapshot(joystick);
+
+    lora_tx_data.joystick[0] = (float)joystick[0];
+    lora_tx_data.joystick[1] = (float)joystick[1];
+    lora_tx_data.joystick[2] = (float)joystick[2];
+    lora_tx_data.joystick[3] = (float)joystick[3];
+
+    lora_tx_data.selected_color =
+        (float)lvgl_ui_selected_color;
+
+    lora_tx_data.r1_count =
+        (float)lvgl_ui_r1_count;
+
+    lora_tx_data.r2_count =
+        (float)lvgl_ui_r2_count;
+
+    lora_tx_data.fake_count =
+        (float)lvgl_ui_fake_count;
+}
+
+/**
+ * @brief 发送一个float数组。
+ *
+ * 数据格式：
+ * float数据 + 00 00 80 7F结束符。
+ */
+uint8_t Lora_SendFloatArray(
+    const float *data,
+    uint16_t float_count)
+{
+    uint16_t payload_length;
+
+    if ((data == NULL) ||
+        (float_count == 0U) ||
+        (float_count > CURVE_TX_MAX_FLOATS))
+    {
+        return 0U;
+    }
+
+    if (Lora_CanTransmit() == 0U)
+    {
+        return 0U;
+    }
+
+    payload_length =
+        (uint16_t)(float_count * sizeof(float));
+
+    memcpy(
+        lora_tx_buffer,
+        data,
+        payload_length);
+
+    lora_tx_buffer[payload_length + 0U] = CURVE_END_0;
+    lora_tx_buffer[payload_length + 1U] = CURVE_END_1;
+    lora_tx_buffer[payload_length + 2U] = CURVE_END_2;
+    lora_tx_buffer[payload_length + 3U] = CURVE_END_3;
+
+    return Lora_StartTransmit(
+        (uint16_t)(payload_length + 4U));
+}
+
+/**
+ * @brief 发送一帧遥控器数据。
+ */
+uint8_t Lora_SendRemoteData(
+    const LoraRemoteData_t *data)
+{
+    return Lora_SendFloatArray(
+        (const float *)data,
+        LORA_REMOTE_FLOAT_COUNT);
+}
+
+/**
+ * @brief 校验并保存一帧接收到的数据。
+ */
+static uint8_t Lora_SaveReceivedFrame(void)
+{
+    LoraRemoteData_t decoded;
+
+    uint16_t payload_length =
+        (uint16_t)(lora_rx_frame_length - 4U);
+
+    uint16_t float_count =
+        (uint16_t)(payload_length / sizeof(float));
+
+    uint16_t i;
+
+    if ((lora_rx_frame_length != LORA_FRAME_SIZE) ||
+        (payload_length !=
+         (LORA_REMOTE_FLOAT_COUNT * sizeof(float))))
+    {
+        lora_rx_length_error_count++;
+        lora_rx_error_count++;
+
+        return 0U;
+    }
+
+    memcpy(
+        &decoded,
+        lora_rx_frame_buffer,
+        sizeof(decoded));
+
+    /* 检查四个摇杆数值范围 */
+    for (i = 0U; i < 4U; i++)
+    {
+        if ((decoded.joystick[i] < -600.0f) ||
+            (decoded.joystick[i] > 600.0f))
+        {
+            lora_rx_value_error_count++;
+            lora_rx_error_count++;
+
+            return 0U;
+        }
+    }
+
+    /* 检查LVGL相关数据范围 */
+    if ((decoded.selected_color < 0.0f) ||
+        (decoded.selected_color > 2.0f) ||
+        (decoded.r1_count < 0.0f) ||
+        (decoded.r1_count > 12.0f) ||
+        (decoded.r2_count < 0.0f) ||
+        (decoded.r2_count > 12.0f) ||
+        (decoded.fake_count < 0.0f) ||
+        (decoded.fake_count > 12.0f))
+    {
+        lora_rx_value_error_count++;
+        lora_rx_error_count++;
+
+        return 0U;
+    }
+
+    memcpy(
+        (void *)lora_rx_float_array,
+        &decoded,
+        sizeof(decoded));
+
+    memcpy(
+        (void *)&lora_rx_data,
+        &decoded,
+        sizeof(decoded));
+
+    lora_rx_float_count = float_count;
+    lora_rx_frame_count++;
+    lora_rx_last_tick = HAL_GetTick();
+    lora_rx_data_valid = 1U;
+
+    return 1U;
+}
+
+/**
+ * @brief 解析USART1接收到的字节流。
+ */
+static void Lora_ParseReceivedBytes(
+    const uint8_t *data,
+    uint16_t length)
+{
+    uint16_t i;
+
+    for (i = 0U; i < length; i++)
+    {
+        lora_rx_frame_buffer[lora_rx_frame_length] =
+            data[i];
+
+        lora_rx_frame_length++;
+
+        if (lora_rx_frame_length == LORA_FRAME_SIZE)
+        {
+            if ((lora_rx_frame_buffer[
+                     LORA_FRAME_SIZE - 4U] == CURVE_END_0) &&
+                (lora_rx_frame_buffer[
+                     LORA_FRAME_SIZE - 3U] == CURVE_END_1) &&
+                (lora_rx_frame_buffer[
+                     LORA_FRAME_SIZE - 2U] == CURVE_END_2) &&
+                (lora_rx_frame_buffer[
+                     LORA_FRAME_SIZE - 1U] == CURVE_END_3) &&
+                (Lora_SaveReceivedFrame() != 0U))
+            {
+                lora_rx_frame_length = 0U;
+            }
+            else
+            {
+                /*
+                 * 当前36字节不是有效数据帧。
+                 * 删除第一个字节，继续寻找下一帧。
+                 */
+                memmove(
+                    lora_rx_frame_buffer,
+                    &lora_rx_frame_buffer[1],
+                    LORA_FRAME_SIZE - 1U);
+
+                lora_rx_frame_length =
+                    LORA_FRAME_SIZE - 1U;
+
+                lora_rx_resync_count++;
+            }
+        }
+    }
+}
+
+/**
+ * @brief 启动USART1空闲中断DMA接收。
+ */
+static void Lora_StartReceiveDma(void)
+{
+    lora_rx_dma_position = 0U;
+
+    if (HAL_UARTEx_ReceiveToIdle_DMA(
+            &huart1,
+            lora_rx_dma_buffer,
+            sizeof(lora_rx_dma_buffer)) == HAL_OK)
+    {
+        /*
+         * 72字节循环DMA缓存。
+         * 一帧LoRa数据为36字节。
+         */
+    }
+    else
+    {
+        lora_rx_dma_error_count++;
+        lora_rx_error_count++;
+    }
+}
+
+/* ==================== HAL回调函数 ==================== */
+
+/**
+ * @brief USART空闲中断或者DMA接收事件回调。
+ */
+void HAL_UARTEx_RxEventCallback(
+    UART_HandleTypeDef *huart,
+    uint16_t size)
 {
     if (huart->Instance == USART1)
     {
-        lora_ready = 1U;
-    }
-}
+        lora_rx_event_count++;
 
-void LORA_Task(void const * argument)
-{
-    (void)argument;
-
-    for (;;)
-    {
-        /*
-         * 无脑改这里。
-         *
-         * 每个数都按 int16_t 发送，范围是 -32768 ~ 32767。
-         * 可以直接填变量，也可以直接填数字。
-         */
-        int16_t lora_data[] =
+        if (size > sizeof(lora_rx_dma_buffer))
         {
-            (int16_t)X1,
-            (int16_t)Y1,
-            (int16_t)X2,
-            (int16_t)Y2,
-            (int16_t)BOGAN[0],
-            (int16_t)BOGAN[1],
-            (int16_t)key_state[1],
-            (int16_t)key_state[2],
-            (int16_t)key_state[3],
-            (int16_t)key_state[4],
-            (int16_t)q_state[0],
-            (int16_t)q_state[1],
+            size = sizeof(lora_rx_dma_buffer);
 
-            /* 测试例子：不需要就删掉。 */
-            -1,
-            -555,
-            2918,
-        };
-
-        lora_task_loop_count++;
-
-        if (lora_enable_tx == 0U)
-        {
-            lora_skip_disabled_count++;
+            lora_rx_overflow_count++;
+            lora_rx_error_count++;
         }
-        else if ((lora_debug_manual_mode != 0U) && (lora_debug_send_once == 0U))
+
+        /*
+         * DMA当前位置没有发生回绕。
+         */
+        if (size > lora_rx_dma_position)
         {
-            lora_skip_manual_count++;
+            Lora_ParseReceivedBytes(
+                &lora_rx_dma_buffer[lora_rx_dma_position],
+                (uint16_t)(
+                    size - lora_rx_dma_position));
+        }
+        /*
+         * DMA当前位置发生回绕。
+         */
+        else if (size < lora_rx_dma_position)
+        {
+            Lora_ParseReceivedBytes(
+                &lora_rx_dma_buffer[lora_rx_dma_position],
+                (uint16_t)(
+                    sizeof(lora_rx_dma_buffer) -
+                    lora_rx_dma_position));
+
+            if (size > 0U)
+            {
+                Lora_ParseReceivedBytes(
+                    lora_rx_dma_buffer,
+                    size);
+            }
+        }
+
+        if (size == sizeof(lora_rx_dma_buffer))
+        {
+            lora_rx_dma_position = 0U;
         }
         else
         {
-            lora_send_call_count++;
-            (void)Lora_DmaSendInt16(lora_data, LORA_ARRAY_COUNT(lora_data));
-            lora_debug_send_once = 0U;
+            lora_rx_dma_position = size;
+        }
+    }
+}
+
+/**
+ * @brief USART错误回调。
+ */
+void HAL_UART_ErrorCallback(
+    UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        lora_rx_dma_error_count++;
+        lora_rx_error_count++;
+        lora_rx_restart_pending = 1U;
+    }
+}
+
+/**
+ * @brief USART DMA发送完成回调。
+ */
+void HAL_UART_TxCpltCallback(
+    UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1)
+    {
+        lora_tx_complete_count++;
+        lora_tx_last_complete_tick = HAL_GetTick();
+        lora_tx_ready = 1U;
+    }
+}
+
+/* ==================== FreeRTOS任务 ==================== */
+
+/**
+ * @brief LoRa发送和接收任务。
+ */
+void LORA_Task(void const *argument)
+{
+    (void)argument;
+
+    Lora_StartReceiveDma();
+
+    for (;;)
+    {
+        lora_task_loop_count++;
+
+        /*
+         * 防止发送完成回调偶尔没有及时更新状态。
+         */
+        if ((lora_tx_ready == 0U) &&
+            (huart1.gState == HAL_UART_STATE_READY))
+        {
+            lora_tx_ready = 1U;
         }
 
-        osDelay(lora_send_period_ms);
+        /*
+         * USART接收出现错误后重新启动DMA。
+         */
+        if ((lora_rx_restart_pending != 0U) &&
+            (huart1.RxState == HAL_UART_STATE_READY))
+        {
+            lora_rx_restart_pending = 0U;
+            Lora_StartReceiveDma();
+        }
+
+        /*
+         * 更新摇杆和LVGL控制数据。
+         */
+        Lora_UpdateLocalData();
+
+#if LORA_AUTO_SEND_ENABLE
+
+        {
+            uint8_t changed;
+            uint8_t heartbeat;
+
+            /*
+             * 第一次必须发送。
+             * 后续数据变化超过阈值时立即发送。
+             */
+            changed =
+                (lora_last_sent_valid == 0U) ||
+                (Lora_DataChanged(
+                     &lora_tx_data,
+                     &lora_last_sent_data) != 0U);
+
+            /*
+             * 数据不变化时，每100ms发送一次心跳。
+             */
+            heartbeat =
+                ((uint32_t)(
+                     HAL_GetTick() -
+                     lora_last_send_tick) >=
+                 LORA_HEARTBEAT_MS);
+
+            /*
+             * 数据发生微小变化，但是没有达到变化阈值。
+             */
+            if ((lora_last_sent_valid != 0U) &&
+                (changed == 0U) &&
+                (heartbeat == 0U) &&
+                (memcmp(
+                     &lora_tx_data,
+                     &lora_last_sent_data,
+                     sizeof(lora_tx_data)) != 0))
+            {
+                lora_tx_noise_ignored_count++;
+            }
+
+            /*
+             * 摇杆发生有效变化或者到达心跳时间时发送。
+             */
+            if ((changed != 0U) ||
+                (heartbeat != 0U))
+            {
+                if (Lora_SendRemoteData(
+                        &lora_tx_data) != 0U)
+                {
+                    memcpy(
+                        &lora_last_sent_data,
+                        &lora_tx_data,
+                        sizeof(lora_tx_data));
+
+                    lora_last_sent_valid = 1U;
+                    lora_last_send_tick = HAL_GetTick();
+
+                    if (changed != 0U)
+                    {
+                        lora_tx_change_count++;
+                    }
+                    else
+                    {
+                        lora_tx_heartbeat_count++;
+                    }
+                }
+            }
+        }
+
+#endif
+
+        osDelay(LORA_TASK_PERIOD_MS);
     }
 }

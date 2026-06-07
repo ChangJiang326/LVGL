@@ -9,6 +9,10 @@
 #define KEY_NUM 4
 #define KEY_DEBOUNCE_CNT 10
 #define JOYSTICK_DEADZONE_ADC 20
+#define JOYSTICK_X1_OFFSET 51
+#define JOYSTICK_Y1_OFFSET -21
+#define JOYSTICK_X2_OFFSET 0
+#define JOYSTICK_Y2_OFFSET 34
 #define LEVER_LOW_ON_ADC 1200
 #define LEVER_LOW_OFF_ADC 1500
 #define LEVER_HIGH_ON_ADC 2900
@@ -50,6 +54,7 @@ volatile int X1 = 0;
 volatile int Y1 = 0;
 volatile int X2 = 0;
 volatile int Y2 = 0;
+volatile uint32_t joystick_snapshot_sequence = 0U;
 
 typedef struct
 {
@@ -88,6 +93,28 @@ typedef struct
 static ADC_Joystick_t adc_js = {0};
 
 /* --------------------内部函数-------------------- */
+
+void ADC_GetJoystickSnapshot(int joystick[JOYSTICK_CH_NUM])
+{
+    uint32_t sequence_before;
+    uint32_t sequence_after;
+
+    do
+    {
+        sequence_before = joystick_snapshot_sequence;
+        __DMB();
+
+        joystick[0] = X1;
+        joystick[1] = Y1;
+        joystick[2] = X2;
+        joystick[3] = Y2;
+
+        __DMB();
+        sequence_after = joystick_snapshot_sequence;
+    }
+    while (((sequence_before & 1U) != 0U) ||
+           (sequence_before != sequence_after));
+}
 
 static void sort_u16(uint16_t *buf, uint8_t len)
 {
@@ -145,7 +172,7 @@ static void ADC_Joystick_UpdateMedian(int16_t *ch_filter)
 
         sort_u16(temp_buf, ADC_MEDIAN_FILTER_SIZE);
 
-        ch_filter[ch] = (temp_buf[4] + temp_buf[5]) / 2;
+        ch_filter[ch] = temp_buf[ADC_MEDIAN_FILTER_SIZE / 2U];
     }
 }
 
@@ -377,6 +404,7 @@ void ADC_Task(void const *argument)
 {
     static const uint32_t revLength = ADC_NUM;
     int16_t ch_filter[JOYSTICK_CH_NUM] = {0};
+    int joystick_output[JOYSTICK_CH_NUM] = {0};
 
     ADC_Task_Stage_Debug = 1;
     ADC_DMA_Start_Status_Debug = HAL_ADC_Start_DMA(&hadc1, (uint32_t *)revADC1DMA, revLength);
@@ -414,10 +442,25 @@ void ADC_Task(void const *argument)
         ADC_Joystick_UpdateAverage();
         ADC_Lever_Update();
 
-        X1 = gui_adc[0] + 52;
-        Y1 = gui_adc[1] - 20;
-        X2 = gui_adc[2] + 9;
-        Y2 = gui_adc[3];
+        joystick_output[0] = gui_adc[0] + JOYSTICK_X1_OFFSET;
+        joystick_output[1] = gui_adc[1] + JOYSTICK_Y1_OFFSET;
+        joystick_output[2] = gui_adc[2] + JOYSTICK_X2_OFFSET;
+        joystick_output[3] = gui_adc[3] + JOYSTICK_Y2_OFFSET;
+
+        /*
+         * 序号为奇数时表示正在更新，偶数时表示四轴数据完整。
+         * LoRa通过ADC_GetJoystickSnapshot读取一致的四轴数据。
+         */
+        joystick_snapshot_sequence++;
+        __DMB();
+
+        X1 = joystick_output[0];
+        Y1 = joystick_output[1];
+        X2 = joystick_output[2];
+        Y2 = joystick_output[3];
+
+        __DMB();
+        joystick_snapshot_sequence++;
 
         Keys_Update();
         Q_Update();

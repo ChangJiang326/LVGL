@@ -27,6 +27,8 @@ extern volatile uint8_t lvgl_ui_fake_count;
 extern volatile uint8_t lvgl_ui_total_marked_count;
 extern volatile uint8_t lvgl_ui_confirm_ok;
 extern volatile int8_t lvgl_ui_square_values[13];
+extern volatile int8_t lvgl_ui_zone_square_values[3][13];
+extern volatile uint8_t lvgl_ui_zone_confirmed[3];
 
 void lvgl_ui_create(void);
 

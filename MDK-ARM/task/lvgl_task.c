@@ -49,14 +49,6 @@ void lvgl_task(void const * argument)
   /* USER CODE END lvgl_task */
 }
 
-uint32_t __get_IPSR(void)
-{
-  uint32_t result;
-
-  __asm volatile ("MRS %0, ipsr" : "=r" (result));
-  return result;
-}
-
 uint32_t __clz(uint32_t value)
 {
   uint32_t count = 0;

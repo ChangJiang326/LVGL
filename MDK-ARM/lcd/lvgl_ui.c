@@ -31,7 +31,16 @@
 #define STATE_LABEL_H     36
 #define STATE_LABEL_GAP   8
 #define GRID_VALUE_MAX    8
+#define GRID_R1_REQUIRED  3
+#define GRID_R2_REQUIRED  4
+#define GRID_FAKE_REQUIRED 1
 #define INPUT_LABEL_COUNT 12
+#define INPUT_KEY_COUNT   4
+#define INPUT_KEY_BOX_W   96
+#define INPUT_KEY_BOX_H   54
+#define INPUT_KEY_BOX_Y   42
+#define INPUT_KEY_BOX_X   372
+#define INPUT_KEY_BOX_GAP 18
 #define NAV_PAGE_HOME     1
 #define NAV_PAGE_GRID     2
 #define NAV_PAGE_INPUT    3
@@ -60,6 +69,8 @@ volatile uint8_t lvgl_ui_total_marked_count = 0;
 volatile uint8_t lvgl_ui_confirm_ok = 0;
 volatile uintptr_t lvgl_ui_last_obj = 0;
 volatile int8_t lvgl_ui_square_values[13];
+volatile int8_t lvgl_ui_zone_square_values[3][13];
+volatile uint8_t lvgl_ui_zone_confirmed[3];
 
 static void create_home_page(void);
 static void create_grid_page(uint8_t color_id);
@@ -78,6 +89,7 @@ static lv_obj_t * grid_screen;
 static lv_obj_t * input_screen;
 static lv_obj_t * grid_status_label;
 static lv_obj_t * input_value_labels[INPUT_LABEL_COUNT];
+static lv_obj_t * input_key_boxes[INPUT_KEY_COUNT];
 static lv_timer_t * input_timer;
 static lv_obj_t * grid_state_labels[13];
 static lv_obj_t * grid_square_btns[13];
@@ -214,17 +226,46 @@ static void recalc_grid_counts(void)
     lvgl_ui_total_marked_count = lvgl_ui_r1_count + lvgl_ui_r2_count + lvgl_ui_fake_count;
 }
 
+static uint8_t grid_value_can_add(uint8_t square_id, int8_t value)
+{
+    if(lvgl_ui_square_values[square_id] == value) return 1U;
+    if(value == 1 && lvgl_ui_r1_count >= GRID_R1_REQUIRED) return 0U;
+    if(value == 2 && lvgl_ui_r2_count >= GRID_R2_REQUIRED) return 0U;
+    if(value == -1 && lvgl_ui_fake_count >= GRID_FAKE_REQUIRED) return 0U;
+
+    return 1U;
+}
+
 static void set_grid_value(uint8_t square_id, int8_t value)
 {
     if(square_id == 0U || square_id > 12U) return;
+    if((lvgl_ui_selected_color == 1U || lvgl_ui_selected_color == 2U) &&
+       lvgl_ui_zone_confirmed[lvgl_ui_selected_color] != 0U) {
+        update_grid_status("LOCKED");
+        return;
+    }
 
     if(lvgl_ui_square_values[square_id] == value) {
         lvgl_ui_square_values[square_id] = 0;
+    } else if(value == -1 && square_id <= 3U) {
+        update_grid_status("fake NO 1-3");
+        return;
+    } else if(grid_value_can_add(square_id, value) == 0U) {
+        if(value == 1) update_grid_status("R1 MAX 3");
+        else if(value == 2) update_grid_status("R2 MAX 4");
+        else update_grid_status("fake MAX 1");
+        return;
     } else if(lvgl_ui_square_values[square_id] != 0 || lvgl_ui_total_marked_count < GRID_VALUE_MAX) {
         lvgl_ui_square_values[square_id] = value;
     } else {
         update_grid_status("MAX 8");
         return;
+    }
+
+    if(lvgl_ui_selected_color == 1U || lvgl_ui_selected_color == 2U) {
+        lvgl_ui_zone_square_values[lvgl_ui_selected_color][square_id] =
+            lvgl_ui_square_values[square_id];
+        lvgl_ui_zone_confirmed[lvgl_ui_selected_color] = 0U;
     }
 
     recalc_grid_counts();
@@ -256,6 +297,11 @@ static void mode_btn_event_cb(lv_event_t * e)
 
         lvgl_ui_event_count++;
         lvgl_ui_mode_event_count++;
+        if((lvgl_ui_selected_color == 1U || lvgl_ui_selected_color == 2U) &&
+           lvgl_ui_zone_confirmed[lvgl_ui_selected_color] != 0U) {
+            update_grid_status("LOCKED");
+            return;
+        }
         lvgl_ui_selected_mode = (int8_t)mode;
         refresh_mode_buttons();
         update_grid_status(NULL);
@@ -268,8 +314,15 @@ static void confirm_btn_event_cb(lv_event_t * e)
         lvgl_ui_event_count++;
         lvgl_ui_confirm_event_count++;
         recalc_grid_counts();
-        lvgl_ui_confirm_ok = lvgl_ui_total_marked_count == GRID_VALUE_MAX ? 1U : 0U;
-        update_grid_status(lvgl_ui_confirm_ok ? "OK" : "NEED 8");
+        lvgl_ui_confirm_ok = (lvgl_ui_r1_count == GRID_R1_REQUIRED &&
+                              lvgl_ui_r2_count == GRID_R2_REQUIRED &&
+                              lvgl_ui_fake_count == GRID_FAKE_REQUIRED) ? 1U : 0U;
+        if(lvgl_ui_selected_color == 1U || lvgl_ui_selected_color == 2U) {
+            if(lvgl_ui_confirm_ok != 0U) {
+                lvgl_ui_zone_confirmed[lvgl_ui_selected_color] = 1U;
+            }
+        }
+        update_grid_status(lvgl_ui_confirm_ok ? "LOCKED" : "NEED 3/4/1");
     }
 }
 
@@ -552,12 +605,34 @@ static void set_input_label(uint8_t index, const char * text)
     lv_label_set_text(input_value_labels[index], text);
 }
 
+static void set_input_key_box(uint8_t index, uint8_t pressed)
+{
+    lv_obj_t * box;
+    lv_color_t bg;
+    lv_color_t border;
+
+    if(index >= INPUT_KEY_COUNT) return;
+
+    box = input_key_boxes[index];
+    if(box == NULL) return;
+
+    bg = pressed != 0U ? lv_color_hex(0x24A148) : lv_color_hex(0x30343A);
+    border = pressed != 0U ? lv_color_hex(0x12632A) : lv_color_hex(0x7B8088);
+    lv_obj_set_style_bg_color(box, bg, LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(box, border, LV_STATE_DEFAULT);
+}
+
 static void input_timer_cb(lv_timer_t * timer)
 {
     char text[32];
+    uint8_t i;
 
     (void)timer;
     if(lvgl_ui_page != 3U) return;
+
+    for(i = 0; i < INPUT_KEY_COUNT; i++) {
+        set_input_key_box(i, key_state[i + 1U]);
+    }
 
     lv_snprintf(text, sizeof(text), "X1 %d", X1);
     set_input_label(0, text);
@@ -599,9 +674,36 @@ static void create_input_value_label(lv_obj_t * parent, uint8_t index, int32_t x
     lv_label_set_text(label, "-");
 }
 
+static void create_input_key_box(lv_obj_t * parent, uint8_t index, int32_t x, int32_t y)
+{
+    char text[4];
+    lv_obj_t * box = lv_obj_create(parent);
+    lv_obj_t * label;
+
+    input_key_boxes[index] = box;
+    lv_obj_remove_style_all(box);
+    lv_obj_set_size(box, INPUT_KEY_BOX_W, INPUT_KEY_BOX_H);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_style_radius(box, 6, LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(box, 3, LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(box, 0, LV_STATE_DEFAULT);
+
+    label = lv_label_create(box);
+    lv_obj_remove_style_all(label);
+    lv_obj_set_style_text_color(label, lv_color_white(), LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_32, LV_STATE_DEFAULT);
+    lv_snprintf(text, sizeof(text), "K%u", (uint32_t)(index + 1U));
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+
+    set_input_key_box(index, key_state[index + 1U]);
+}
+
 static void create_input_page(void)
 {
     lv_obj_t * screen;
+    uint8_t i;
 
     lvgl_ui_page = 3;
     lvgl_ui_selected_color = 0;
@@ -618,8 +720,11 @@ static void create_input_page(void)
     lv_obj_set_style_bg_color(screen, lv_color_hex(0xF4F6F8), LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_STATE_DEFAULT);
 
-    for(uint8_t i = 0; i < INPUT_LABEL_COUNT; i++) {
+    for(i = 0; i < INPUT_LABEL_COUNT; i++) {
         input_value_labels[i] = NULL;
+    }
+    for(i = 0; i < INPUT_KEY_COUNT; i++) {
+        input_key_boxes[i] = NULL;
     }
 
     create_back_button(screen);
@@ -631,11 +736,17 @@ static void create_input_page(void)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_32, LV_STATE_DEFAULT);
     lv_label_set_text(title, "INPUT");
 
-    for(uint8_t i = 0; i < 4U; i++) {
+    for(i = 0; i < INPUT_KEY_COUNT; i++) {
+        create_input_key_box(screen, i,
+                             INPUT_KEY_BOX_X + i * (INPUT_KEY_BOX_W + INPUT_KEY_BOX_GAP),
+                             INPUT_KEY_BOX_Y);
+    }
+
+    for(i = 0; i < 4U; i++) {
         create_input_value_label(screen, i, 130 + (i % 2U) * 270, 140 + (i / 2U) * 76);
     }
 
-    for(uint8_t i = 0; i < 4U; i++) {
+    for(i = 0; i < 4U; i++) {
         create_input_value_label(screen, (uint8_t)(4U + i), 130 + (i % 2U) * 270, 330 + (i / 2U) * 76);
     }
 
@@ -704,14 +815,16 @@ static void create_grid_page(uint8_t color_id)
     uint8_t i;
 
     lvgl_ui_page = 2;
+    lvgl_ui_selected_color = color_id;
     lvgl_ui_selected_mode = 1;
     lvgl_ui_confirm_ok = 0;
     for(i = 1; i <= 12U; i++) {
-        lvgl_ui_square_values[i] = 0;
+        lvgl_ui_square_values[i] = lvgl_ui_zone_square_values[color_id][i];
         grid_square_btns[i] = NULL;
         grid_state_labels[i] = NULL;
     }
     recalc_grid_counts();
+    lvgl_ui_confirm_ok = lvgl_ui_zone_confirmed[color_id];
 
     if(grid_screen == NULL) {
         grid_screen = lv_obj_create(NULL);
@@ -734,7 +847,7 @@ static void create_grid_page(uint8_t color_id)
     lv_obj_set_style_text_align(grid_status_label, LV_TEXT_ALIGN_CENTER, LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(grid_status_label, lv_color_hex(0x30343A), LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(grid_status_label, &lv_font_montserrat_14, LV_STATE_DEFAULT);
-    update_grid_status(NULL);
+    update_grid_status(lvgl_ui_zone_confirmed[color_id] != 0U ? "LOCKED" : NULL);
 
     for(int row = 0; row < GRID_ROWS; row++) {
         for(int col = 0; col < GRID_COLS; col++) {
