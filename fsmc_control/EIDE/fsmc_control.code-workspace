@@ -4,6 +4,8 @@
             "path": "."
         }
     ],
-    "settings": {},
+    "settings": {
+        "stm32LiveWatch.elfPath": "e:\\26_RC_control\\LVGL\\fsmc_control\\EIDE\\build\\fsmc_control\\fsmc_control.elf"
+    },
     "extensions": {}
 }
